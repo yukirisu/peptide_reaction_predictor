@@ -130,7 +130,7 @@
             try {
                 // 🚀 変更点：Gradio公式クライアントで安全・確実に通信
                 const app = await client("Yukirisu/chem-api");
-                const result = await app.predict("/predict", [inputText]);
+                const result = await app.predict(0, [inputText]);
                 
                 // 結果を取り出す
                 const predictedSmiles = result.data[0]; 
