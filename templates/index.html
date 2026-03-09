@@ -1,183 +1,65 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>有機合成ルート設計システム (GitHub Pages版)</title>
-    <script src="https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js"></script>
-    <style>
-        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
-        h1 { color: #333; }
-        .step-container { background-color: white; border: 1px solid #ddd; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .arrow-down { text-align: center; font-size: 24px; color: #666; margin: 10px 0; }
-        .error { color: red; font-weight: bold; margin-top: 10px; }
-        .status { font-weight: bold; margin-bottom: 20px; padding: 10px; border-radius: 4px; }
-        .ready { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .loading { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-        input[type="text"], select { width: 60%; padding: 10px; font-size: 16px; margin-right: 10px; border: 1px solid #ccc; border-radius: 4px;}
-        button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #0056b3; }
-        button:disabled { background-color: #cccccc; cursor: not-allowed; }
-        .mol-image { text-align: center; margin-top: 10px; }
-        .mol-image svg { max-width: 100%; height: auto; }
-        .compound-info { background-color: #f4f4f4; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; word-break: break-all;}
-    </style>
-</head>
-<body>
-    <h1>有機合成ルート設計システム</h1>
-    <p>基質を入力し、試薬をプルダウンから選択して多段階の反応ルートを設計します。</p>
-
-    <div id="loading-status" class="status loading">⚙️ RDKitを読み込み中... 少々お待ちください。</div>
-
-    <div class="step-container" id="init-container">
-        <h3>Step 0: 出発物質（基質）</h3>
-        <input type="text" id="initial-smiles" value="NCC(=O)O" placeholder="SMILESを入力 (例: NCC(=O)O)">
-        <button id="start-btn" disabled>合成をスタート</button>
-        <div id="init-error" class="error"></div>
-    </div>
-
-    <div id="synthesis-route"></div>
-
-    <script>
-        let RDKitModule = null;
-        let currentSmiles = ""; // 現在の化合物のSMILESを保持
-        let stepCount = 0;      // 現在のステップ数
-
-        // 代表的な有機合成・ペプチド合成の試薬10選（簡易的なSMILES置換ルール）
-        const reagents = [
-            { id: "Ac2O", name: "アセチル化 (Ac2O / Pyridine)", action: (s) => s.replace(/N(?![C\(])/i, "NC(=O)C") },
-            { id: "Boc2O", name: "Boc保護 (Boc2O / TEA)", action: (s) => s.replace(/N(?![C\(])/i, "NC(=O)OC(C)(C)C") },
-            { id: "FmocCl", name: "Fmoc保護 (Fmoc-Cl)", action: (s) => s.replace(/N(?![C\(])/i, "NC(=O)OCC1C2=CC=CC=C2C3=CC=CC=C13") },
-            { id: "MeOH", name: "メチルエステル化 (MeOH / H+)", action: (s) => s.replace(/C\(=O\)O(?![C])/i, "C(=O)OC") },
-            { id: "TFA", name: "Boc脱保護 (TFA)", action: (s) => s.replace(/NC\(=O\)OC\(C\)\(C\)C/i, "N") },
-            { id: "Pip", name: "Fmoc脱保護 (Piperidine)", action: (s) => s.replace(/NC\(=O\)OCC1C2=CC=CC=C2C3=CC=CC=C13/i, "N") },
-            { id: "NaOH", name: "エステル加水分解 (NaOH aq.)", action: (s) => s.replace(/C\(=O\)OC(?![C])/i, "C(=O)O") },
-            { id: "NaBH4", name: "ケトン還元 (NaBH4)", action: (s) => s.replace(/C\(=O\)(?![ON])/i, "C(OH)") },
-            { id: "H2Pd", name: "接触還元 (H2 / Pd-C)", action: (s) => s.replace(/C=C/i, "CC") },
-            { id: "DCC", name: "カルボン酸の活性化 (DCC / NHS)", action: (s) => s.replace(/C\(=O\)O(?![C])/i, "C(=O)ON1C(=O)CCC1=O") }
-        ];
-
-        // RDKitの初期化
-        initRDKitModule().then(function(instance) {
-            RDKitModule = instance;
-            const statusDiv = document.getElementById('loading-status');
-            statusDiv.innerText = "✅ RDKitの準備が完了しました！";
-            statusDiv.className = "status ready";
-            document.getElementById('start-btn').disabled = false;
-        }).catch(function(e) {
-            console.error(e);
-            document.getElementById('loading-status').innerText = "❌ RDKitの読み込みに失敗しました。";
-        });
-
-        // 構造式を描画してHTMLを返す関数
-        function getMoleculeHtml(smiles, title) {
-            let mol = null;
-            try {
-                mol = RDKitModule.get_mol(smiles);
-                if (!mol || !mol.is_valid()) throw new Error("無効なSMILES");
-                const svg = mol.get_svg();
-                return `
-                    <div class="mol-image">${svg}</div>
-                    <div class="compound-info">
-                        <strong>${title}</strong><br>
-                        SMILES: ${smiles}
-                    </div>
-                `;
-            } catch (e) {
-                return `<div class="error">エラー: 構造を描画できませんでした。(${smiles})</div>`;
-            } finally {
-                if (mol) mol.delete();
-            }
-        }
-
-        // 次のステップの入力UIを追加する関数
+// 次のステップの入力UIを追加する関数（条件入力付き）
         function addNextStepUI() {
             stepCount++;
             const routeDiv = document.getElementById('synthesis-route');
             
-            // 下向き矢印
             const arrowDiv = document.createElement('div');
             arrowDiv.className = 'arrow-down';
             arrowDiv.innerHTML = '⬇️';
             routeDiv.appendChild(arrowDiv);
 
-            // 新しいステップのコンテナ
             const stepDiv = document.createElement('div');
             stepDiv.className = 'step-container';
             stepDiv.id = `step-${stepCount}`;
 
-            // プルダウンメニューの生成
             let optionsHtml = '<option value="">試薬を選択してください</option>';
             reagents.forEach((r, index) => {
                 optionsHtml += `<option value="${index}">${r.name}</option>`;
             });
 
+            // 溶媒の選択肢（例）
+            const solventsHtml = `
+                <option value="DMF">DMF</option>
+                <option value="DCM">DCM</option>
+                <option value="THF">THF</option>
+                <option value="H2O">H2O</option>
+            `;
+
+            // HTMLに条件入力欄（温度、圧力、濃度、溶媒）を追加
             stepDiv.innerHTML = `
-                <h3>Step ${stepCount}: 反応</h3>
-                <select id="reagent-${stepCount}">
-                    ${optionsHtml}
-                </select>
-                <button onclick="executeReaction(${stepCount})">反応させる</button>
+                <h3>Step ${stepCount}: 反応条件の設定</h3>
+                <div style="margin-bottom: 10px;">
+                    <select id="reagent-${stepCount}" style="width: 30%;">${optionsHtml}</select>
+                    溶媒: <select id="solvent-${stepCount}" style="width: 15%;">${solventsHtml}</select>
+                </div>
+                <div style="margin-bottom: 10px; font-size: 14px;">
+                    温度(°C): <input type="number" id="temp-${stepCount}" value="25" style="width: 60px;">
+                    圧力(atm): <input type="number" id="press-${stepCount}" value="1" style="width: 60px;">
+                    濃度(M): <input type="number" id="conc-${stepCount}" value="0.1" step="0.1" style="width: 60px;">
+                </div>
+                <button onclick="executeReaction(${stepCount})">反応を予測する</button>
                 <div id="result-${stepCount}"></div>
             `;
             routeDiv.appendChild(stepDiv);
         }
 
-        // 合成スタートボタンの処理
-        document.getElementById('start-btn').addEventListener('click', function() {
-            const inputSmiles = document.getElementById('initial-smiles').value.trim();
-            if (!inputSmiles) return;
-
-            // 初期化
-            document.getElementById('synthesis-route').innerHTML = "";
-            stepCount = 0;
-            currentSmiles = inputSmiles;
-
-            // 基質の描画
-            const resultHtml = getMoleculeHtml(currentSmiles, "出発物質");
-            const routeDiv = document.getElementById('synthesis-route');
-            
-            const substrateDiv = document.createElement('div');
-            substrateDiv.className = 'step-container';
-            substrateDiv.innerHTML = `<h3>基質の確認</h3>${resultHtml}`;
-            routeDiv.appendChild(substrateDiv);
-
-            // 試薬選択のUIを追加
-            addNextStepUI();
-        });
-
-        // 反応を実行する関数
-        window.executeReaction = function(step) {
-            const selectElement = document.getElementById(`reagent-${step}`);
-            const reagentIndex = selectElement.value;
-            const resultDiv = document.getElementById(`result-${step}`);
-
-            if (reagentIndex === "") {
-                resultDiv.innerHTML = '<div class="error">試薬を選択してください。</div>';
-                return;
-            }
-
-            const reagent = reagents[reagentIndex];
-            
-            // 擬似的な反応（文字列置換）を実行
-            const newSmiles = reagent.action(currentSmiles);
-
-            if (newSmiles === currentSmiles) {
-                resultDiv.innerHTML = `<div class="error">この基質には「${reagent.name}」が反応する部位が見つかりません。</div>`;
-                return;
-            }
-
-            // 反応成功：SMILESを更新して描画
-            currentSmiles = newSmiles;
-            resultDiv.innerHTML = getMoleculeHtml(currentSmiles, `生成物 (処理: ${reagent.name})`);
-
-            // 選択したプルダウンとボタンを無効化（過去の履歴を固定するため）
-            selectElement.disabled = true;
-            event.target.disabled = true;
-
-            // 次のステップのUIを追加
-            addNextStepUI();
-        };
-    </script>
-</body>
-</html>
+        // executeReaction 関数の中に、ダミーの予測結果表示を追加（一部抜粋）
+        // （中略：newSmilesを生成した後...）
+        
+        // --- ここからダミー結果の生成 ---
+        const dummyYield = Math.floor(Math.random() * 40) + 50; // 50〜90%のランダムな収率
+        const solventUsed = document.getElementById(`solvent-${step}`).value;
+        const tempUsed = document.getElementById(`temp-${step}`).value;
+        
+        const predictionDetails = `
+            <div style="background-color: #e9ecef; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 14px;">
+                <strong>💡 予測データ (※現在はUIテスト用のダミー値です)</strong><br>
+                条件: ${solventUsed}, ${tempUsed}°C<br>
+                予測収率: <strong>${dummyYield}%</strong><br>
+                位置選択性: 100:0 (単一生成物)<br>
+                立体選択性: N/A
+            </div>
+        `;
+        
+        resultDiv.innerHTML = getMoleculeHtml(currentSmiles, `生成物 (処理: ${reagent.name})`) + predictionDetails;
+        // --- ここまで ---
