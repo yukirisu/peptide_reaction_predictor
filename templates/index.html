@@ -29,7 +29,7 @@
     
     <div class="server-info">
         <strong>🌐 接続先サーバー:</strong> 自作のAI推論サーバー（Hugging Face Spaces）に接続して予測を行います。<br>
-        <span style="font-size: 0.9em; color: #555;">※パスワード（トークン）の入力は不要になりました！</span>
+        <span style="font-size: 0.9em; color: #555;">※パスワード（トークン）の入力は不要です。</span>
     </div>
 
     <div class="container">
@@ -75,13 +75,12 @@
         <div class="smiles-text" id="output-smiles"></div>
     </div>
 
-    <script>
+    <script type="module">
+        import { client } from "https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js";
+
         let RDKitModule = null;
 
-        // あなたのSpaceのAPI URL（すべて小文字で ハイフン つなぎになります）
-        const SPACE_API_URL = "https://yukirisu-chem-api.hf.space/api/predict";
-
-        initRDKitModule().then(function(instance) {
+        window.initRDKitModule().then(function(instance) {
             RDKitModule = instance;
             document.getElementById('rdkit-status').innerText = "✅ RDKit準備完了";
             document.getElementById('predict-btn').disabled = false;
@@ -124,24 +123,16 @@
 
             const inputText = `${reactant}.${reagent}`;
             
-            statusMsg.innerHTML = '<span class="loading">🔄 AIサーバーで計算中...（初回は15秒ほどかかる場合があります）</span>';
+            statusMsg.innerHTML = '<span class="loading">🔄 AIサーバーに接続中...（計算に数秒かかります）</span>';
             resultContainer.style.display = 'none';
             this.disabled = true;
 
             try {
-                // 自作のSpaceサーバーへ通信（Gradioの仕様に合わせて {data: [入力値]} という形式で送ります）
-                const response = await fetch(SPACE_API_URL, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ data: [inputText] })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`サーバーエラー: ${response.status}`);
-                }
-
-                const result = await response.json();
-                // Gradioは結果を data 配列の0番目に入れて返してきます
+                // 🚀 変更点：Gradio公式クライアントで安全・確実に通信
+                const app = await client("Yukirisu/chem-api");
+                const result = await app.predict("/predict", [inputText]);
+                
+                // 結果を取り出す
                 const predictedSmiles = result.data[0]; 
                 
                 statusMsg.innerHTML = '<span style="color: green; font-weight: bold;">✅ 予測が完了しました！</span>';
@@ -152,7 +143,7 @@
 
             } catch (error) {
                 console.error(error);
-                statusMsg.innerHTML = `<span class="error">❌ エラーが発生しました: ${error.message}<br>※サーバーがスリープ中の可能性があります。Hugging FaceのSpaces画面を開いてステータスを確認してください。</span>`;
+                statusMsg.innerHTML = `<span class="error">❌ エラーが発生しました: ${error.message}</span>`;
             } finally {
                 this.disabled = false;
             }
