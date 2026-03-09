@@ -11,7 +11,7 @@
         h1, h2, h3 { color: #2c3e50; }
         .input-group { margin-bottom: 15px; }
         .input-group label { display: block; font-weight: bold; margin-bottom: 5px; }
-        input[type="text"], input[type="password"] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="text"], input[type="password"], select { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         button { padding: 10px 20px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.3s; }
         button:hover { background-color: #2980b9; }
         button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
@@ -21,6 +21,7 @@
         .smiles-text { font-family: monospace; font-size: 1.2em; color: #e67e22; word-break: break-all; margin-top: 10px; }
         .loading { color: #f39c12; font-weight: bold; }
         .error { color: #c0392b; font-weight: bold; }
+        .reagent-selector { background-color: #e8f8f5; padding: 10px; border-radius: 4px; border: 1px solid #d1f2eb; margin-bottom: 10px;}
     </style>
 </head>
 <body>
@@ -48,9 +49,29 @@
             <label for="reactant-smiles">基質 (Reactant) のSMILES</label>
             <input type="text" id="reactant-smiles" value="CC(=O)O" placeholder="例: CC(=O)O (酢酸)">
         </div>
-        <div class="input-group">
-            <label for="reagent-smiles">試薬 (Reagent) のSMILES</label>
-            <input type="text" id="reagent-smiles" value="CN" placeholder="例: CN (メチルアミン)">
+
+        <div class="reagent-selector">
+            <div class="input-group" style="margin-bottom: 10px;">
+                <label for="reagent-select">よく使う試薬から選ぶ (オプション)</label>
+                <select id="reagent-select">
+                    <option value="">-- プルダウンから選ぶか、下に入力してください --</option>
+                    <option value="CC(=O)OC(C)=O">無水酢酸 (Ac2O) / アセチル化</option>
+                    <option value="CC(C)(C)OC(=O)OC(=O)OC(C)(C)C">Boc2O / Boc保護</option>
+                    <option value="O=C(Cl)OCC1C2=CC=CC=C2C3=CC=CC=C13">Fmoc-Cl / Fmoc保護</option>
+                    <option value="CO">メタノール (MeOH) / メチルエステル化</option>
+                    <option value="FC(F)(F)C(=O)O">TFA / Boc脱保護</option>
+                    <option value="C1CCNCC1">ピペリジン / Fmoc脱保護</option>
+                    <option value="[OH-]">NaOH (水酸化物イオン) / 加水分解</option>
+                    <option value="[BH4-]">NaBH4 / ケトン還元</option>
+                    <option value="[HH]">H2 / 接触還元</option>
+                    <option value="C1CCC(CC1)N=C=NC2CCCCC2">DCC / カルボン酸活性化</option>
+                </select>
+            </div>
+            
+            <div class="input-group" style="margin-bottom: 0;">
+                <label for="reagent-smiles">試薬 (Reagent) のSMILES 【直接編集可能】</label>
+                <input type="text" id="reagent-smiles" value="" placeholder="例: CN (メチルアミン) または上のリストから選択">
+            </div>
         </div>
         
         <button id="predict-btn" disabled>AIで生成物を予測する</button>
@@ -71,6 +92,14 @@
             RDKitModule = instance;
             document.getElementById('rdkit-status').innerText = "✅ RDKit準備完了";
             document.getElementById('predict-btn').disabled = false;
+        });
+
+        // 🌟 追加：プルダウンが変更されたら、テキストボックスにSMILESを自動入力する処理
+        document.getElementById('reagent-select').addEventListener('change', function() {
+            const smilesInput = document.getElementById('reagent-smiles');
+            if (this.value) {
+                smilesInput.value = this.value;
+            }
         });
 
         // SMILESをSVG画像に変換する関数
@@ -103,7 +132,6 @@
             const outputSmilesDiv = document.getElementById('output-smiles');
             const outputSvgDiv = document.getElementById('output-svg');
 
-            // 入力チェック
             if (!token) {
                 statusMsg.innerHTML = '<span class="error">エラー: Hugging Faceのトークンを入力してください。</span>';
                 return;
@@ -113,16 +141,13 @@
                 return;
             }
 
-            // AIへの入力フォーマット作成 (Reactant.Reagent)
             const inputText = `${reactant}.${reagent}`;
             
-            // UIをローディング状態にする
             statusMsg.innerHTML = '<span class="loading">🔄 AIモデルに通信中... 予測結果を計算しています。</span>';
             resultContainer.style.display = 'none';
             this.disabled = true;
 
             try {
-                // Hugging Face APIへリクエスト送信
                 const response = await fetch(modelUrl, {
                     method: "POST",
                     headers: {
@@ -140,7 +165,6 @@
 
                 const data = await response.json();
 
-                // コールドスタート（AIの起動待ち）の処理
                 if (response.status === 503 && data.estimated_time) {
                     const waitTime = Math.ceil(data.estimated_time);
                     statusMsg.innerHTML = `<span class="loading">⏳ AIモデルをサーバーのメモリにロード中です（約 ${waitTime} 秒かかります）。<br>ロード完了後に再度ボタンを押してください。</span>`;
@@ -152,13 +176,11 @@
                     throw new Error(data.error || `HTTPエラー ${response.status}`);
                 }
 
-                // 結果の取得と表示
                 const predictedSmiles = data[0].generated_text.trim();
                 
                 statusMsg.innerHTML = '<span style="color: green; font-weight: bold;">✅ 予測が完了しました！</span>';
                 outputSmilesDiv.innerText = `SMILES: ${predictedSmiles}`;
                 
-                // RDKitで生成物を描画
                 drawMolecule(predictedSmiles, 'output-svg');
                 resultContainer.style.display = 'block';
 
