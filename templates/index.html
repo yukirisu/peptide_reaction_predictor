@@ -11,38 +11,29 @@
         h1, h2, h3 { color: #2c3e50; }
         .input-group { margin-bottom: 15px; }
         .input-group label { display: block; font-weight: bold; margin-bottom: 5px; }
-        input[type="text"], input[type="password"], select { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="text"], select { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         button { padding: 10px 20px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.3s; }
         button:hover { background-color: #2980b9; }
         button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
-        .token-alert { font-size: 0.9em; color: #e74c3c; margin-top: 5px; }
         .result-box { text-align: center; padding: 20px; border: 2px dashed #3498db; border-radius: 8px; margin-top: 20px; background-color: #ebf5fb; }
         .mol-image svg { max-width: 100%; height: auto; background-color: white; border-radius: 4px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .smiles-text { font-family: monospace; font-size: 1.2em; color: #e67e22; word-break: break-all; margin-top: 10px; }
         .loading { color: #f39c12; font-weight: bold; }
         .error { color: #c0392b; font-weight: bold; }
         .reagent-selector { background-color: #e8f8f5; padding: 10px; border-radius: 4px; border: 1px solid #d1f2eb; margin-bottom: 10px;}
+        .server-info { background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #3498db; }
     </style>
 </head>
 <body>
     <h1>AI 化学反応予測システム</h1>
-    <p>Hugging Faceにデプロイされた独自のAIモデルを使用して、未知の化学反応の生成物を予測します。</p>
-
-    <div class="container" id="setup-container">
-        <h3>🔑 Step 1: AIへの接続設定</h3>
-        <div class="input-group">
-            <label for="hf-token">Hugging Face アクセストークン (Read権限推奨)</label>
-            <input type="password" id="hf-token" placeholder="hf_xxx">
-            <div class="token-alert">※セキュリティのため、トークンはサーバーに保存されず、ブラウザを閉じると消去されます。</div>
-        </div>
-        <div class="input-group">
-            <label for="model-url">AIモデルのURL</label>
-            <input type="text" id="model-url" value="https://api-inference.huggingface.co/models/Yukirisu/chem-reaction-predictor-t5">
-        </div>
+    
+    <div class="server-info">
+        <strong>🌐 接続先サーバー:</strong> 自作のAI推論サーバー（Hugging Face Spaces）に接続して予測を行います。<br>
+        <span style="font-size: 0.9em; color: #555;">※パスワード（トークン）の入力は不要になりました！</span>
     </div>
 
     <div class="container">
-        <h3>🧪 Step 2: 反応条件の入力</h3>
+        <h3>🧪 反応条件の入力</h3>
         <p id="rdkit-status" style="color: #7f8c8d;">⚙️ RDKit読み込み中...</p>
         
         <div class="input-group">
@@ -70,7 +61,7 @@
             
             <div class="input-group" style="margin-bottom: 0;">
                 <label for="reagent-smiles">試薬 (Reagent) のSMILES 【直接編集可能】</label>
-                <input type="text" id="reagent-smiles" value="" placeholder="例: CN (メチルアミン) または上のリストから選択">
+                <input type="text" id="reagent-smiles" value="CN" placeholder="例: CN (メチルアミン) または上のリストから選択">
             </div>
         </div>
         
@@ -87,14 +78,15 @@
     <script>
         let RDKitModule = null;
 
-        // RDKitの初期化
+        // あなたのSpaceのAPI URL（すべて小文字で ハイフン つなぎになります）
+        const SPACE_API_URL = "https://yukirisu-chem-api.hf.space/api/predict";
+
         initRDKitModule().then(function(instance) {
             RDKitModule = instance;
             document.getElementById('rdkit-status').innerText = "✅ RDKit準備完了";
             document.getElementById('predict-btn').disabled = false;
         });
 
-        // 🌟 追加：プルダウンが変更されたら、テキストボックスにSMILESを自動入力する処理
         document.getElementById('reagent-select').addEventListener('change', function() {
             const smilesInput = document.getElementById('reagent-smiles');
             if (this.value) {
@@ -102,7 +94,6 @@
             }
         });
 
-        // SMILESをSVG画像に変換する関数
         function drawMolecule(smiles, targetElementId) {
             let mol = null;
             const targetDiv = document.getElementById(targetElementId);
@@ -111,7 +102,7 @@
                 if (mol && mol.is_valid()) {
                     targetDiv.innerHTML = mol.get_svg();
                 } else {
-                    targetDiv.innerHTML = `<span class="error">構造を描画できませんでした（無効なSMILESの可能性があります）</span>`;
+                    targetDiv.innerHTML = `<span class="error">構造を描画できませんでした</span>`;
                 }
             } catch (e) {
                 targetDiv.innerHTML = `<span class="error">描画エラーが発生しました</span>`;
@@ -120,73 +111,48 @@
             }
         }
 
-        // 予測ボタンの処理
         document.getElementById('predict-btn').addEventListener('click', async function() {
-            const token = document.getElementById('hf-token').value.trim();
-            const modelUrl = document.getElementById('model-url').value.trim();
             const reactant = document.getElementById('reactant-smiles').value.trim();
             const reagent = document.getElementById('reagent-smiles').value.trim();
-            
             const statusMsg = document.getElementById('status-msg');
             const resultContainer = document.getElementById('result-container');
-            const outputSmilesDiv = document.getElementById('output-smiles');
-            const outputSvgDiv = document.getElementById('output-svg');
-
-            if (!token) {
-                statusMsg.innerHTML = '<span class="error">エラー: Hugging Faceのトークンを入力してください。</span>';
-                return;
-            }
+            
             if (!reactant || !reagent) {
-                statusMsg.innerHTML = '<span class="error">エラー: 基質と試薬の両方のSMILESを入力してください。</span>';
+                statusMsg.innerHTML = '<span class="error">エラー: 基質と試薬の両方を入力してください。</span>';
                 return;
             }
 
             const inputText = `${reactant}.${reagent}`;
             
-            statusMsg.innerHTML = '<span class="loading">🔄 AIモデルに通信中... 予測結果を計算しています。</span>';
+            statusMsg.innerHTML = '<span class="loading">🔄 AIサーバーで計算中...（初回は15秒ほどかかる場合があります）</span>';
             resultContainer.style.display = 'none';
             this.disabled = true;
 
             try {
-                const response = await fetch(modelUrl, {
+                // 自作のSpaceサーバーへ通信（Gradioの仕様に合わせて {data: [入力値]} という形式で送ります）
+                const response = await fetch(SPACE_API_URL, {
                     method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${token}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ 
-                        inputs: inputText,
-                        parameters: {
-                            max_length: 128,
-                            num_beams: 5
-                        }
-                    })
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ data: [inputText] })
                 });
 
-                const data = await response.json();
-
-                if (response.status === 503 && data.estimated_time) {
-                    const waitTime = Math.ceil(data.estimated_time);
-                    statusMsg.innerHTML = `<span class="loading">⏳ AIモデルをサーバーのメモリにロード中です（約 ${waitTime} 秒かかります）。<br>ロード完了後に再度ボタンを押してください。</span>`;
-                    this.disabled = false;
-                    return;
-                }
-
                 if (!response.ok) {
-                    throw new Error(data.error || `HTTPエラー ${response.status}`);
+                    throw new Error(`サーバーエラー: ${response.status}`);
                 }
 
-                const predictedSmiles = data[0].generated_text.trim();
+                const result = await response.json();
+                // Gradioは結果を data 配列の0番目に入れて返してきます
+                const predictedSmiles = result.data[0]; 
                 
                 statusMsg.innerHTML = '<span style="color: green; font-weight: bold;">✅ 予測が完了しました！</span>';
-                outputSmilesDiv.innerText = `SMILES: ${predictedSmiles}`;
+                document.getElementById('output-smiles').innerText = `SMILES: ${predictedSmiles}`;
                 
                 drawMolecule(predictedSmiles, 'output-svg');
                 resultContainer.style.display = 'block';
 
             } catch (error) {
                 console.error(error);
-                statusMsg.innerHTML = `<span class="error">❌ エラーが発生しました: ${error.message}</span>`;
+                statusMsg.innerHTML = `<span class="error">❌ エラーが発生しました: ${error.message}<br>※サーバーがスリープ中の可能性があります。Hugging FaceのSpaces画面を開いてステータスを確認してください。</span>`;
             } finally {
                 this.disabled = false;
             }
