@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Peptide Reaction Predictor</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .result-box { border: 1px solid #ccc; padding: 20px; margin-top: 20px; border-radius: 8px; }
+        .error { color: red; font-weight: bold; }
+        input[type="text"] { width: 80%; padding: 10px; margin-bottom: 10px; }
+        button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        .smiles-output { background-color: #f4f4f4; padding: 10px; word-break: break-all; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>反応予測システム (Boltz互換SMILES対応)</h1>
+    <p>基質となるペプチドやアミノ酸のSMILESを入力してください。</p>
+    
+    <form action="/predict" method="post">
+        <input type="text" name="smiles" value="{{ smiles if smiles else 'NCC(=O)O' }}" placeholder="例: NCC(=O)O" required>
+        <button type="submit">アミノ基を保護（予測を実行）</button>
+    </form>
+
+    {% if error %}
+        <p class="error">エラー: {{ error }}</p>
+    {% endif %}
+
+    {% if svg_image %}
+        <div class="result-box">
+            <h2>反応結果（中間体）</h2>
+            <p>※青くハイライトされている部分が新しく形成された結合・保護基です。</p>
+            <div>
+                {{ svg_image | safe }}
+            </div>
+            <h3>生成物のSMILES (Boltz入力用)</h3>
+            <div class="smiles-output">{{ product_smiles }}</div>
+        </div>
+    {% endif %}
+</body>
+</html>
