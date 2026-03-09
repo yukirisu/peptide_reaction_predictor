@@ -3,40 +3,97 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Peptide Reaction Predictor</title>
+    <title>Peptide Reaction Predictor (GitHub Pages版)</title>
+    <script src="https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js"></script>
     <style>
         body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .result-box { border: 1px solid #ccc; padding: 20px; margin-top: 20px; border-radius: 8px; }
-        .error { color: red; font-weight: bold; }
-        input[type="text"] { width: 80%; padding: 10px; margin-bottom: 10px; }
-        button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .result-box { border: 1px solid #ccc; padding: 20px; margin-top: 20px; border-radius: 8px; text-align: center; }
+        .error { color: red; font-weight: bold; margin-top: 10px; }
+        .status { color: #555; font-style: italic; margin-bottom: 20px; }
+        input[type="text"] { width: 70%; padding: 10px; margin-bottom: 10px; font-size: 16px; }
+        button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
         button:hover { background-color: #0056b3; }
-        .smiles-output { background-color: #f4f4f4; padding: 10px; word-break: break-all; font-family: monospace; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #svg-output svg { max-width: 100%; height: auto; }
     </style>
 </head>
 <body>
-    <h1>反応予測システム (Boltz互換SMILES対応)</h1>
-    <p>基質となるペプチドやアミノ酸のSMILESを入力してください。</p>
-    
-    <form action="/predict" method="post">
-        <input type="text" name="smiles" value="{{ smiles if smiles else 'NCC(=O)O' }}" placeholder="例: NCC(=O)O" required>
-        <button type="submit">アミノ基を保護（予測を実行）</button>
-    </form>
+    <h1>化学構造 描画システム</h1>
+    <p>SMILESを入力して「描画する」を押すと、ブラウザ上で直接計算して画像を表示します。（サーバー通信不要）</p>
 
-    {% if error %}
-        <p class="error">エラー: {{ error }}</p>
-    {% endif %}
+    <div id="loading-status" class="status">⚙️ RDKitを読み込み中... 少々お待ちください。</div>
 
-    {% if svg_image %}
-        <div class="result-box">
-            <h2>反応結果（中間体）</h2>
-            <p>※青くハイライトされている部分が新しく形成された結合・保護基です。</p>
-            <div>
-                {{ svg_image | safe }}
-            </div>
-            <h3>生成物のSMILES (Boltz入力用)</h3>
-            <div class="smiles-output">{{ product_smiles }}</div>
-        </div>
-    {% endif %}
+    <div>
+        <input type="text" id="smiles-input" value="NCC(=O)O" placeholder="SMILESを入力 (例: NCC(=O)O)">
+        <button id="draw-btn" disabled>描画する</button>
+    </div>
+
+    <div id="error-msg" class="error"></div>
+
+    <div class="result-box" id="result-container" style="display: none;">
+        <h2>構造式</h2>
+        <div id="svg-output"></div>
+    </div>
+
+    <script>
+        let RDKitModule = null;
+
+        // 1. ページ読み込み時に RDKit.js を初期化する
+        initRDKitModule().then(function(instance) {
+            RDKitModule = instance;
+            document.getElementById('loading-status').innerText = "✅ RDKitの準備が完了しました！SMILESを入力できます。";
+            document.getElementById('draw-btn').disabled = false; // ボタンを押せるようにする
+        }).catch(function(e) {
+            console.error(e);
+            document.getElementById('loading-status').innerText = "❌ RDKitの読み込みに失敗しました。";
+            document.getElementById('loading-status').style.color = "red";
+        });
+
+        // 2. ボタンが押されたときの処理
+        document.getElementById('draw-btn').addEventListener('click', function() {
+            if (!RDKitModule) return;
+
+            const smiles = document.getElementById('smiles-input').value.trim();
+            const outputDiv = document.getElementById('svg-output');
+            const errorDiv = document.getElementById('error-msg');
+            const resultContainer = document.getElementById('result-container');
+
+            // 表示のリセット
+            outputDiv.innerHTML = "";
+            errorDiv.innerText = "";
+            resultContainer.style.display = "none";
+
+            if (!smiles) {
+                errorDiv.innerText = "エラー: SMILESを入力してください。";
+                return;
+            }
+
+            let mol = null;
+            try {
+                // 3. SMILESから分子オブジェクトを作成
+                mol = RDKitModule.get_mol(smiles);
+                
+                if (!mol || !mol.is_valid()) {
+                    throw new Error("無効なSMILES文字列です。");
+                }
+
+                // 4. SVG画像を生成
+                const svg = mol.get_svg();
+                
+                // 5. 画面に表示
+                outputDiv.innerHTML = svg;
+                resultContainer.style.display = "block";
+
+            } catch (e) {
+                errorDiv.innerText = "エラー: 構造を読み込めませんでした。正しいSMILESか確認してください。";
+                console.error(e);
+            } finally {
+                // 6. メモリリークを防ぐため、使い終わった分子オブジェクトは必ず削除する
+                if (mol) {
+                    mol.delete();
+                }
+            }
+        });
+    </script>
 </body>
 </html>
