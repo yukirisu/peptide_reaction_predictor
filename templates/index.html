@@ -3,97 +3,181 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Peptide Reaction Predictor (GitHub Pages版)</title>
+    <title>有機合成ルート設計システム (GitHub Pages版)</title>
     <script src="https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js"></script>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .result-box { border: 1px solid #ccc; padding: 20px; margin-top: 20px; border-radius: 8px; text-align: center; }
+        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+        h1 { color: #333; }
+        .step-container { background-color: white; border: 1px solid #ddd; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .arrow-down { text-align: center; font-size: 24px; color: #666; margin: 10px 0; }
         .error { color: red; font-weight: bold; margin-top: 10px; }
-        .status { color: #555; font-style: italic; margin-bottom: 20px; }
-        input[type="text"] { width: 70%; padding: 10px; margin-bottom: 10px; font-size: 16px; }
+        .status { font-weight: bold; margin-bottom: 20px; padding: 10px; border-radius: 4px; }
+        .ready { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .loading { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        input[type="text"], select { width: 60%; padding: 10px; font-size: 16px; margin-right: 10px; border: 1px solid #ccc; border-radius: 4px;}
         button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
         button:hover { background-color: #0056b3; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; }
-        #svg-output svg { max-width: 100%; height: auto; }
+        .mol-image { text-align: center; margin-top: 10px; }
+        .mol-image svg { max-width: 100%; height: auto; }
+        .compound-info { background-color: #f4f4f4; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; word-break: break-all;}
     </style>
 </head>
 <body>
-    <h1>化学構造 描画システム</h1>
-    <p>SMILESを入力して「描画する」を押すと、ブラウザ上で直接計算して画像を表示します。（サーバー通信不要）</p>
+    <h1>有機合成ルート設計システム</h1>
+    <p>基質を入力し、試薬をプルダウンから選択して多段階の反応ルートを設計します。</p>
 
-    <div id="loading-status" class="status">⚙️ RDKitを読み込み中... 少々お待ちください。</div>
+    <div id="loading-status" class="status loading">⚙️ RDKitを読み込み中... 少々お待ちください。</div>
 
-    <div>
-        <input type="text" id="smiles-input" value="NCC(=O)O" placeholder="SMILESを入力 (例: NCC(=O)O)">
-        <button id="draw-btn" disabled>描画する</button>
+    <div class="step-container" id="init-container">
+        <h3>Step 0: 出発物質（基質）</h3>
+        <input type="text" id="initial-smiles" value="NCC(=O)O" placeholder="SMILESを入力 (例: NCC(=O)O)">
+        <button id="start-btn" disabled>合成をスタート</button>
+        <div id="init-error" class="error"></div>
     </div>
 
-    <div id="error-msg" class="error"></div>
-
-    <div class="result-box" id="result-container" style="display: none;">
-        <h2>構造式</h2>
-        <div id="svg-output"></div>
-    </div>
+    <div id="synthesis-route"></div>
 
     <script>
         let RDKitModule = null;
+        let currentSmiles = ""; // 現在の化合物のSMILESを保持
+        let stepCount = 0;      // 現在のステップ数
 
-        // 1. ページ読み込み時に RDKit.js を初期化する
+        // 代表的な有機合成・ペプチド合成の試薬10選（簡易的なSMILES置換ルール）
+        const reagents = [
+            { id: "Ac2O", name: "アセチル化 (Ac2O / Pyridine)", action: (s) => s.replace(/N(?![C\(])/i, "NC(=O)C") },
+            { id: "Boc2O", name: "Boc保護 (Boc2O / TEA)", action: (s) => s.replace(/N(?![C\(])/i, "NC(=O)OC(C)(C)C") },
+            { id: "FmocCl", name: "Fmoc保護 (Fmoc-Cl)", action: (s) => s.replace(/N(?![C\(])/i, "NC(=O)OCC1C2=CC=CC=C2C3=CC=CC=C13") },
+            { id: "MeOH", name: "メチルエステル化 (MeOH / H+)", action: (s) => s.replace(/C\(=O\)O(?![C])/i, "C(=O)OC") },
+            { id: "TFA", name: "Boc脱保護 (TFA)", action: (s) => s.replace(/NC\(=O\)OC\(C\)\(C\)C/i, "N") },
+            { id: "Pip", name: "Fmoc脱保護 (Piperidine)", action: (s) => s.replace(/NC\(=O\)OCC1C2=CC=CC=C2C3=CC=CC=C13/i, "N") },
+            { id: "NaOH", name: "エステル加水分解 (NaOH aq.)", action: (s) => s.replace(/C\(=O\)OC(?![C])/i, "C(=O)O") },
+            { id: "NaBH4", name: "ケトン還元 (NaBH4)", action: (s) => s.replace(/C\(=O\)(?![ON])/i, "C(OH)") },
+            { id: "H2Pd", name: "接触還元 (H2 / Pd-C)", action: (s) => s.replace(/C=C/i, "CC") },
+            { id: "DCC", name: "カルボン酸の活性化 (DCC / NHS)", action: (s) => s.replace(/C\(=O\)O(?![C])/i, "C(=O)ON1C(=O)CCC1=O") }
+        ];
+
+        // RDKitの初期化
         initRDKitModule().then(function(instance) {
             RDKitModule = instance;
-            document.getElementById('loading-status').innerText = "✅ RDKitの準備が完了しました！SMILESを入力できます。";
-            document.getElementById('draw-btn').disabled = false; // ボタンを押せるようにする
+            const statusDiv = document.getElementById('loading-status');
+            statusDiv.innerText = "✅ RDKitの準備が完了しました！";
+            statusDiv.className = "status ready";
+            document.getElementById('start-btn').disabled = false;
         }).catch(function(e) {
             console.error(e);
             document.getElementById('loading-status').innerText = "❌ RDKitの読み込みに失敗しました。";
-            document.getElementById('loading-status').style.color = "red";
         });
 
-        // 2. ボタンが押されたときの処理
-        document.getElementById('draw-btn').addEventListener('click', function() {
-            if (!RDKitModule) return;
+        // 構造式を描画してHTMLを返す関数
+        function getMoleculeHtml(smiles, title) {
+            let mol = null;
+            try {
+                mol = RDKitModule.get_mol(smiles);
+                if (!mol || !mol.is_valid()) throw new Error("無効なSMILES");
+                const svg = mol.get_svg();
+                return `
+                    <div class="mol-image">${svg}</div>
+                    <div class="compound-info">
+                        <strong>${title}</strong><br>
+                        SMILES: ${smiles}
+                    </div>
+                `;
+            } catch (e) {
+                return `<div class="error">エラー: 構造を描画できませんでした。(${smiles})</div>`;
+            } finally {
+                if (mol) mol.delete();
+            }
+        }
 
-            const smiles = document.getElementById('smiles-input').value.trim();
-            const outputDiv = document.getElementById('svg-output');
-            const errorDiv = document.getElementById('error-msg');
-            const resultContainer = document.getElementById('result-container');
+        // 次のステップの入力UIを追加する関数
+        function addNextStepUI() {
+            stepCount++;
+            const routeDiv = document.getElementById('synthesis-route');
+            
+            // 下向き矢印
+            const arrowDiv = document.createElement('div');
+            arrowDiv.className = 'arrow-down';
+            arrowDiv.innerHTML = '⬇️';
+            routeDiv.appendChild(arrowDiv);
 
-            // 表示のリセット
-            outputDiv.innerHTML = "";
-            errorDiv.innerText = "";
-            resultContainer.style.display = "none";
+            // 新しいステップのコンテナ
+            const stepDiv = document.createElement('div');
+            stepDiv.className = 'step-container';
+            stepDiv.id = `step-${stepCount}`;
 
-            if (!smiles) {
-                errorDiv.innerText = "エラー: SMILESを入力してください。";
+            // プルダウンメニューの生成
+            let optionsHtml = '<option value="">試薬を選択してください</option>';
+            reagents.forEach((r, index) => {
+                optionsHtml += `<option value="${index}">${r.name}</option>`;
+            });
+
+            stepDiv.innerHTML = `
+                <h3>Step ${stepCount}: 反応</h3>
+                <select id="reagent-${stepCount}">
+                    ${optionsHtml}
+                </select>
+                <button onclick="executeReaction(${stepCount})">反応させる</button>
+                <div id="result-${stepCount}"></div>
+            `;
+            routeDiv.appendChild(stepDiv);
+        }
+
+        // 合成スタートボタンの処理
+        document.getElementById('start-btn').addEventListener('click', function() {
+            const inputSmiles = document.getElementById('initial-smiles').value.trim();
+            if (!inputSmiles) return;
+
+            // 初期化
+            document.getElementById('synthesis-route').innerHTML = "";
+            stepCount = 0;
+            currentSmiles = inputSmiles;
+
+            // 基質の描画
+            const resultHtml = getMoleculeHtml(currentSmiles, "出発物質");
+            const routeDiv = document.getElementById('synthesis-route');
+            
+            const substrateDiv = document.createElement('div');
+            substrateDiv.className = 'step-container';
+            substrateDiv.innerHTML = `<h3>基質の確認</h3>${resultHtml}`;
+            routeDiv.appendChild(substrateDiv);
+
+            // 試薬選択のUIを追加
+            addNextStepUI();
+        });
+
+        // 反応を実行する関数
+        window.executeReaction = function(step) {
+            const selectElement = document.getElementById(`reagent-${step}`);
+            const reagentIndex = selectElement.value;
+            const resultDiv = document.getElementById(`result-${step}`);
+
+            if (reagentIndex === "") {
+                resultDiv.innerHTML = '<div class="error">試薬を選択してください。</div>';
                 return;
             }
 
-            let mol = null;
-            try {
-                // 3. SMILESから分子オブジェクトを作成
-                mol = RDKitModule.get_mol(smiles);
-                
-                if (!mol || !mol.is_valid()) {
-                    throw new Error("無効なSMILES文字列です。");
-                }
+            const reagent = reagents[reagentIndex];
+            
+            // 擬似的な反応（文字列置換）を実行
+            const newSmiles = reagent.action(currentSmiles);
 
-                // 4. SVG画像を生成
-                const svg = mol.get_svg();
-                
-                // 5. 画面に表示
-                outputDiv.innerHTML = svg;
-                resultContainer.style.display = "block";
-
-            } catch (e) {
-                errorDiv.innerText = "エラー: 構造を読み込めませんでした。正しいSMILESか確認してください。";
-                console.error(e);
-            } finally {
-                // 6. メモリリークを防ぐため、使い終わった分子オブジェクトは必ず削除する
-                if (mol) {
-                    mol.delete();
-                }
+            if (newSmiles === currentSmiles) {
+                resultDiv.innerHTML = `<div class="error">この基質には「${reagent.name}」が反応する部位が見つかりません。</div>`;
+                return;
             }
-        });
+
+            // 反応成功：SMILESを更新して描画
+            currentSmiles = newSmiles;
+            resultDiv.innerHTML = getMoleculeHtml(currentSmiles, `生成物 (処理: ${reagent.name})`);
+
+            // 選択したプルダウンとボタンを無効化（過去の履歴を固定するため）
+            selectElement.disabled = true;
+            event.target.disabled = true;
+
+            // 次のステップのUIを追加
+            addNextStepUI();
+        };
     </script>
 </body>
 </html>
