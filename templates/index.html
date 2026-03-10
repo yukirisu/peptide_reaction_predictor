@@ -28,8 +28,8 @@
     <h1>AI 化学反応予測システム</h1>
     
     <div class="server-info">
-        <strong>🌐 接続先サーバー:</strong> 自作のAI推論サーバー（Hugging Face Spaces）に接続して予測を行います。<br>
-        <span style="font-size: 0.9em; color: #555;">※パスワード（トークン）の入力は不要です。</span>
+        <strong>🌐 接続先サーバー:</strong> 自作のAI推論サーバー（Hugging Face Spaces）に直結しています。<br>
+        <span style="font-size: 0.9em; color: #555;">※公開サーバーのため、トークンなしで直接予測が可能です。</span>
     </div>
 
     <div class="container">
@@ -43,25 +43,20 @@
 
         <div class="reagent-selector">
             <div class="input-group" style="margin-bottom: 10px;">
-                <label for="reagent-select">よく使う試薬から選ぶ (オプション)</label>
+                <label for="reagent-select">よく使う試薬から選ぶ</label>
                 <select id="reagent-select">
-                    <option value="">-- プルダウンから選ぶか、下に入力してください --</option>
+                    <option value="">-- リストから選択 --</option>
                     <option value="CC(=O)OC(C)=O">無水酢酸 (Ac2O) / アセチル化</option>
                     <option value="CC(C)(C)OC(=O)OC(=O)OC(C)(C)C">Boc2O / Boc保護</option>
-                    <option value="O=C(Cl)OCC1C2=CC=CC=C2C3=CC=CC=C13">Fmoc-Cl / Fmoc保護</option>
                     <option value="CO">メタノール (MeOH) / メチルエステル化</option>
-                    <option value="FC(F)(F)C(=O)O">TFA / Boc脱保護</option>
-                    <option value="C1CCNCC1">ピペリジン / Fmoc脱保護</option>
                     <option value="[OH-]">NaOH (水酸化物イオン) / 加水分解</option>
                     <option value="[BH4-]">NaBH4 / ケトン還元</option>
-                    <option value="[HH]">H2 / 接触還元</option>
-                    <option value="C1CCC(CC1)N=C=NC2CCCCC2">DCC / カルボン酸活性化</option>
                 </select>
             </div>
             
             <div class="input-group" style="margin-bottom: 0;">
-                <label for="reagent-smiles">試薬 (Reagent) のSMILES 【直接編集可能】</label>
-                <input type="text" id="reagent-smiles" value="CN" placeholder="例: CN (メチルアミン) または上のリストから選択">
+                <label for="reagent-smiles">試薬 (Reagent) のSMILES</label>
+                <input type="text" id="reagent-smiles" value="CN" placeholder="例: CN (メチルアミン)">
             </div>
         </div>
         
@@ -80,19 +75,19 @@
 
         let RDKitModule = null;
 
+        // RDKitの初期化
         window.initRDKitModule().then(function(instance) {
             RDKitModule = instance;
             document.getElementById('rdkit-status').innerText = "✅ RDKit準備完了";
             document.getElementById('predict-btn').disabled = false;
         });
 
+        // 試薬セレクトボックスの連動
         document.getElementById('reagent-select').addEventListener('change', function() {
-            const smilesInput = document.getElementById('reagent-smiles');
-            if (this.value) {
-                smilesInput.value = this.value;
-            }
+            if (this.value) document.getElementById('reagent-smiles').value = this.value;
         });
 
+        // 化学構造式の描画
         function drawMolecule(smiles, targetElementId) {
             let mol = null;
             const targetDiv = document.getElementById(targetElementId);
@@ -104,12 +99,13 @@
                     targetDiv.innerHTML = `<span class="error">構造を描画できませんでした</span>`;
                 }
             } catch (e) {
-                targetDiv.innerHTML = `<span class="error">描画エラーが発生しました</span>`;
+                targetDiv.innerHTML = `<span class="error">描画エラー</span>`;
             } finally {
                 if (mol) mol.delete();
             }
         }
 
+        // 予測実行
         document.getElementById('predict-btn').addEventListener('click', async function() {
             const reactant = document.getElementById('reactant-smiles').value.trim();
             const reagent = document.getElementById('reagent-smiles').value.trim();
@@ -117,33 +113,32 @@
             const resultContainer = document.getElementById('result-container');
             
             if (!reactant || !reagent) {
-                statusMsg.innerHTML = '<span class="error">エラー: 基質と試薬の両方を入力してください。</span>';
+                statusMsg.innerHTML = '<span class="error">基質と試薬を入力してください。</span>';
                 return;
             }
 
             const inputText = `${reactant}.${reagent}`;
-            
-            statusMsg.innerHTML = '<span class="loading">🔄 AIサーバーに接続中...（計算に数秒かかります）</span>';
+            statusMsg.innerHTML = '<span class="loading">🔄 AIサーバーで計算中... (10〜20秒かかる場合があります)</span>';
             resultContainer.style.display = 'none';
             this.disabled = true;
 
             try {
-                // 🚀 変更点：Gradio公式クライアントで安全・確実に通信
+                // 🚀 最新の通信形式：Yukirisu/chem-api に接続
                 const app = await client("Yukirisu/chem-api");
+                
+                // fn_index: 0 を使用し、配列形式でデータを渡す
                 const result = await app.predict(0, [inputText]);
                 
-                // 結果を取り出す
-                const predictedSmiles = result.data[0]; 
-                
-                statusMsg.innerHTML = '<span style="color: green; font-weight: bold;">✅ 予測が完了しました！</span>';
-                document.getElementById('output-smiles').innerText = `SMILES: ${predictedSmiles}`;
-                
-                drawMolecule(predictedSmiles, 'output-svg');
-                resultContainer.style.display = 'block';
-
+                if (result && result.data) {
+                    const predictedSmiles = result.data[0];
+                    statusMsg.innerHTML = '<span style="color: green; font-weight: bold;">✅ 予測完了！</span>';
+                    document.getElementById('output-smiles').innerText = `Predicted SMILES: ${predictedSmiles}`;
+                    drawMolecule(predictedSmiles, 'output-svg');
+                    resultContainer.style.display = 'block';
+                }
             } catch (error) {
-                console.error(error);
-                statusMsg.innerHTML = `<span class="error">❌ エラーが発生しました: ${error.message}</span>`;
+                console.error("Connection Error:", error);
+                statusMsg.innerHTML = `<span class="error">❌ エラー: ${error.message}</span>`;
             } finally {
                 this.disabled = false;
             }
