@@ -123,11 +123,11 @@
             this.disabled = true;
 
             try {
-                // 🚀 最新の通信形式：Yukirisu/chem-api に接続
+                // 🚀 Yukirisu/chem-api に接続
                 const app = await client("Yukirisu/chem-api");
                 
-                // fn_index: 0 を使用し、配列形式でデータを渡す
-                const result = await app.predict(0, [inputText]);
+                // 🚀 重要：app.py の api_name="predict" と一致させる
+                const result = await app.predict("/predict", [inputText]);
                 
                 if (result && result.data) {
                     const predictedSmiles = result.data[0];
